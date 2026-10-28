@@ -54,14 +54,25 @@ $targets = @(
 foreach ($t in $targets) {
     $name = $t.Name
     $obj  = Join-Path $Root "build\$name.obj"
+
+    # Response files avoid PowerShell->native quoting issues entirely.
+    $clRsp = Join-Path $Root "build\$name.cl.rsp"
+    @("/nologo","/c","/kernel","/GS-","/W4","/WX-","/O2","/Oi") + $commonDefines +
+        $incArgs + "/Fo`"$obj`"" + (Join-Path $Root $t.Src) |
+        Set-Content -Path $clRsp -Encoding ASCII
+
     Write-Host "`n=== CL $name ==="
-    & $cl /nologo /c /kernel /GS- /W4 /WX- /O2 /Oi @commonDefines $incArgs "/Fo$obj" (Join-Path $Root $t.Src)
+    & $cl "@$clRsp"
     if ($LASTEXITCODE -ne 0) { throw "cl failed for $name ($LASTEXITCODE)" }
 
+    $lnkRsp = Join-Path $Root "build\$name.lnk.rsp"
+    @("/nologo","/OUT:`"$Out\$name.sys`"","/MACHINE:ARM64","/SUBSYSTEM:NATIVE,10.00","/DRIVER",
+      "/ENTRY:DriverEntry","/NODEFAULTLIB","/RELEASE","/PDB:`"$Out\$name.pdb`"") +
+        $libArgs + ($t.Libs) + "`"$obj`"" |
+        Set-Content -Path $lnkRsp -Encoding ASCII
+
     Write-Host "=== LINK $name ==="
-    & $link /nologo /OUT:"$Out\$name.sys" /MACHINE:ARM64 /SUBSYSTEM:NATIVE,10.00 /DRIVER `
-        /ENTRY:DriverEntry /NODEFAULTLIB /RELEASE /PDB:"$Out\$name.pdb" `
-        $libArgs ($t.Libs) $obj
+    & $link "@$lnkRsp"
     if ($LASTEXITCODE -ne 0) { throw "link failed for $name ($LASTEXITCODE)" }
 }
 
