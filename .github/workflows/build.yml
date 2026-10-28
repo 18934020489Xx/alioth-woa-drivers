@@ -16,6 +16,7 @@ jobs:
         run: |
           $v = '10.0.26100.2454'
           nuget install Microsoft.Windows.SDK.CPP.arm64 -Version $v -OutputDirectory packages -NonInteractive
+          nuget install Microsoft.Windows.SDK.cpp       -Version $v -OutputDirectory packages -NonInteractive
           nuget install Microsoft.Windows.WDK.ARM64     -Version $v -OutputDirectory packages -NonInteractive
           Get-ChildItem packages | Select-Object Name
 
