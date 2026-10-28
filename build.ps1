@@ -1,8 +1,6 @@
 # build.ps1 - Compile the two WDM drivers for ARM64 without WDK MSBuild integration.
-# Works on any Windows machine with MSVC (VS2022/VS2026) + WDK NuGet packages.
-#
-# Inputs:  $env:WDK_ROOT      - directory containing NuGet package folders
-# Output:  stage\  with .sys/.inf/.cat/.cer
+# Needs only: MSVC (VS2022/VS2026) + Microsoft.Windows.WDK.ARM64 NuGet package.
+# Output: stage\ with .sys/.inf/.cat/.cer
 
 $ErrorActionPreference = 'Stop'
 $Root = $PSScriptRoot
@@ -20,31 +18,27 @@ $link = "$msvc\bin\Hostx64\arm64\link.exe"
 if (-not (Test-Path $cl)) { throw "cl.exe (Hostx64/arm64) not found under $msvc" }
 Write-Host "MSVC   : $msvc"
 
-# ---------- 2. locate WDK / SDK NuGet content ----------
+# ---------- 2. locate WDK NuGet content (recursive search, layout-agnostic) ----------
 $wdkPkg = (Get-ChildItem "$Pkg\Microsoft.Windows.WDK.ARM64*" -Directory | Select-Object -First 1).FullName
-$sdkPkg = (Get-ChildItem "$Pkg\Microsoft.Windows.SDK.CPP.arm64*" -Directory | Select-Object -First 1).FullName
 Write-Host "WDK pkg: $wdkPkg"
-Write-Host "SDK pkg: $sdkPkg"
 
-$wdkInc = (Get-ChildItem "$wdkPkg\c\Include" -Directory -Recurse -Depth 1 | Where-Object { Test-Path "$($_.FullName)\km" } | Select-Object -First 1).FullName
-if (-not $wdkInc) { throw "WDK km include not found under $wdkPkg" }
-$wdkLib = (Get-ChildItem "$wdkPkg\c\Lib" -Directory -Recurse -Depth 1 | Where-Object { Test-Path "$($_.FullName)\km\arm64" } | Select-Object -First 1).FullName
-if (-not $wdkLib) { throw "WDK km\arm64 lib not found under $wdkPkg" }
+$wdmHeader  = Get-ChildItem "$wdkPkg" -Recurse -Filter "wdm.h" | Select-Object -First 1
+$ntoskrnlLib = Get-ChildItem "$wdkPkg" -Recurse -Filter "ntoskrnl.lib" | Select-Object -First 1
+if (-not $wdmHeader)   { Get-ChildItem "$wdkPkg" -Directory -Recurse -Depth 3 | Select FullName; throw "wdm.h not found in WDK package" }
+if (-not $ntoskrnlLib) { Get-ChildItem "$wdkPkg" -Directory -Recurse -Depth 3 | Select FullName; throw "ntoskrnl.lib not found in WDK package" }
 
-$sdkInc = (Get-ChildItem "$sdkPkg\c\Include" -Directory | Select-Object -First 1).FullName
-$sdkLib = (Get-ChildItem "$sdkPkg\c\Lib" -Directory | Select-Object -First 1).FullName
-Write-Host "WDK inc: $wdkInc"
-Write-Host "WDK lib: $wdkLib"
+$wdkIncRoot = $wdmHeader.Directory.Parent.FullName      # ...\Include\<ver>
+$wdkLibRoot = $ntoskrnlLib.Directory.Parent.FullName    # ...\Lib\<ver>\km\arm64
+Write-Host "WDK inc: $wdkIncRoot"
+Write-Host "WDK lib: $wdkLibRoot"
 
 $incArgs = @(
-    "$wdkInc\km", "$wdkInc\km\crt", "$wdkInc\shared",
-    "$sdkInc\ucrt", "$sdkInc\um", "$sdkInc\shared",
+    "$wdkIncRoot\km", "$wdkIncRoot\km\crt", "$wdkIncRoot\shared",
     "$msvc\include"
 ) | ForEach-Object { "/I`"$_`"" }
 
 $libArgs = @(
-    "$wdkLib\km\arm64",
-    "$sdkLib\ucrt\arm64", "$sdkLib\um\arm64",
+    "$wdkLibRoot",
     "$msvc\lib\arm64"
 ) | ForEach-Object { "/LIBPATH:`"$_`"" }
 
@@ -53,7 +47,7 @@ $commonDefines = "/D_ARM64_","/DARM64","/D_WIN64_","/D_M_ARM64",
 
 # ---------- 3. compile + link each driver ----------
 $targets = @(
-    @{ Name='qcfakepep';      Src='qcfakepep\qcfakepep.c';      Libs=@('ntoskrnl.lib','hal.lib') },
+    @{ Name='qcfakepep';      Src='qcfakepep\qcfakepep.c';         Libs=@('ntoskrnl.lib','hal.lib') },
     @{ Name='aliothcpufreq';  Src='aliothcpufreq\aliothcpufreq.c'; Libs=@('ntoskrnl.lib','hal.lib') }
 )
 
@@ -61,7 +55,7 @@ foreach ($t in $targets) {
     $name = $t.Name
     $obj  = Join-Path $Root "build\$name.obj"
     Write-Host "`n=== CL $name ==="
-    & $cl /nologo /c /kernel /GS- /W4 /WX- /O2 /Oi @commonDefines $incArgs "/Fp$Root\build\$name.pch" "/Fo$obj" "/Fd$Root\build\$name.pdb" (Join-Path $Root $t.Src)
+    & $cl /nologo /c /kernel /GS- /W4 /WX- /O2 /Oi @commonDefines $incArgs "/Fo$obj" (Join-Path $Root $t.Src)
     if ($LASTEXITCODE -ne 0) { throw "cl failed for $name ($LASTEXITCODE)" }
 
     Write-Host "=== LINK $name ==="
@@ -78,14 +72,14 @@ Copy-Item "$Root\aliothcpufreq\aliothcpufreq.inf" $Out -Force
 # ---------- 5. inf2cat (best effort) ----------
 $inf2cat = $null
 foreach ($cand in @(
-    (Get-ChildItem "$wdkPkg\c\bin" -Recurse -Filter inf2cat.exe -ErrorAction SilentlyContinue | Select-Object -First 1).FullName,
+    (Get-ChildItem "$wdkPkg" -Recurse -Filter inf2cat.exe -ErrorAction SilentlyContinue | Select-Object -First 1).FullName,
     (& $vswhere -latest -find "**\inf2cat.exe" | Select-Object -First 1)
 )) { if ($cand) { $inf2cat = $cand; break } }
 
 if ($inf2cat) {
     Write-Host "inf2cat: $inf2cat"
-    & $inf2cat /driver:$Out /os:10_ARM64 /verbose:0x0
-    if ($LASTEXITCODE -ne 0) { Write-Warning "inf2cat exited $LASTEXITCODE - check INF issues"; }
+    & $inf2cat /driver:$Out /os:10_ARM64
+    if ($LASTEXITCODE -ne 0) { Write-Warning "inf2cat exited $LASTEXITCODE - check INF issues" }
 } else {
     Write-Warning "inf2cat.exe not found - catalogs will not be generated"
 }
@@ -96,8 +90,8 @@ if ($signtool) {
     $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=Nova WOA Test" `
         -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(5)
     Export-Certificate -Cert $cert -FilePath "$Out\nova-woa-test.cer" | Out-Null
-    $catFiles = Get-ChildItem "$Out\*.cat" -ErrorAction SilentlyContinue
-    & $signtool sign /fd sha256 /n "Nova WOA Test" "$Out\qcfakepep.sys" "$Out\aliothcpufreq.sys" @($catFiles).FullName
+    $catFiles = (Get-ChildItem "$Out\*.cat" -ErrorAction SilentlyContinue).FullName
+    & $signtool sign /fd sha256 /n "Nova WOA Test" "$Out\qcfakepep.sys" "$Out\aliothcpufreq.sys" @catFiles
     if ($LASTEXITCODE -ne 0) { Write-Warning "signtool exited $LASTEXITCODE" }
     Write-Host "Signed with CN=Nova WOA Test (thumbprint $($cert.Thumbprint))"
 } else {
