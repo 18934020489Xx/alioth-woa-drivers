@@ -11,55 +11,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
-
       - name: Install WDK + SDK (NuGet)
         shell: pwsh
         run: |
           $v = '10.0.26100.2454'
-          nuget install Microsoft.Windows.SDK.CPP.arm64 -Version $v -OutputDirectory $env:GITHUB_WORKSPACE\packages -NonInteractive
-          nuget install Microsoft.Windows.WDK.x64        -Version $v -OutputDirectory $env:GITHUB_WORKSPACE\packages -NonInteractive
-          Get-ChildItem "$env:GITHUB_WORKSPACE\packages" | Select-Object Name
+          nuget install Microsoft.Windows.SDK.CPP.arm64 -Version $v -OutputDirectory packages -NonInteractive
+          nuget install Microsoft.Windows.WDK.x64        -Version $v -OutputDirectory packages -NonInteractive
+          Get-ChildItem packages | Select-Object Name
 
-      - name: Locate MSVC ARM64 tools
-        id: vs
+      - name: Build (cl/link direct, ARM64)
         shell: pwsh
         run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $install = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64 -property installationPath
-          Write-Host "VS install: $install"
-          $tools = Get-ChildItem "$install\VC\Tools\MSVC" -Directory | Sort-Object Name -Descending | Select-Object -First 1
-          Write-Host "MSVC: $($tools.FullName)"
-          "vcroot=$($tools.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
-          if (-not $install) { throw "MSVC ARM64 tools not found on runner image" }
-
-      - name: Build qcfakepep (ARM64)
-        shell: cmd
-        run: |
-          call "%VCROOT%\bin\Hostx64\x64\vcvars64.bat" >nul
-          set VCToolsVersion=
-          msbuild qcfakepep\qcfakepep.vcxproj /p:Configuration=Release /p:Platform=ARM64 /p:WDKContentRoot=%GITHUB_WORKSPACE%\packages\Microsoft.Windows.WDK.x64.10.0.26100.2454\c\ /m
-        env:
-          VCROOT: ${{ env.vcroot }}
-
-      - name: Build aliothcpufreq (ARM64)
-        shell: cmd
-        run: |
-          call "%VCROOT%\bin\Hostx64\x64\vcvars64.bat" >nul
-          set VCToolsVersion=
-          msbuild aliothcpufreq\aliothcpufreq.vcxproj /p:Configuration=Release /p:Platform=ARM64 /p:WDKContentRoot=%GITHUB_WORKSPACE%\packages\Microsoft.Windows.WDK.x64.10.0.26100.2454\c\ /m
-        env:
-          VCROOT: ${{ env.vcroot }}
-
-      - name: Collect artifacts
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path stage | Out-Null
-          Copy-Item build\bin\ARM64\*.sys stage\
-          Copy-Item qcfakepep\qcfakepep.inf stage\
-          Copy-Item aliothcpufreq\aliothcpufreq.inf stage\
-          Get-ChildItem stage | Select-Object Name,Length
+          .\build.ps1
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
