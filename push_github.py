@@ -28,6 +28,24 @@ if len(sys.argv) > 1:
 handler = urllib.request.ProxyHandler({"https": PROXY, "http": PROXY})
 opener = urllib.request.build_opener(handler)
 
+def get_sha(path):
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{REPO}/contents/{path}?ref=main",
+        headers={
+            "Authorization": f"Bearer {TOKEN}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "nova-push",
+        },
+        method="GET",
+    )
+    try:
+        with opener.open(req, timeout=60) as r:
+            return json.loads(r.read())["sha"]
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
+
 def api(path, payload):
     req = urllib.request.Request(
         f"https://api.github.com{path}",
@@ -51,11 +69,15 @@ for rel in FILES:
     ok = False
     for attempt in range(1, 6):
         try:
-            api(f"/repos/{REPO}/contents/{rel}", {
+            payload = {
                 "message": f"add {rel}",
                 "content": content,
                 "branch": "main",
-            })
+            }
+            sha = get_sha(rel)
+            if sha:
+                payload["sha"] = sha
+            api(f"/repos/{REPO}/contents/{rel}", payload)
             print(f"OK   {rel} (attempt {attempt})")
             ok = True
             break
