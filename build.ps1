@@ -28,7 +28,7 @@ if (-not $wdmHeader)   { Get-ChildItem "$wdkPkg" -Directory -Recurse -Depth 3 | 
 if (-not $ntoskrnlLib) { Get-ChildItem "$wdkPkg" -Directory -Recurse -Depth 3 | Select FullName; throw "ntoskrnl.lib not found in WDK package" }
 
 $wdkIncRoot = $wdmHeader.Directory.Parent.FullName      # ...\Include\<ver>
-$wdkLibRoot = $ntoskrnlLib.Directory.Parent.FullName    # ...\Lib\<ver>\km\arm64
+$wdkLibRoot = $ntoskrnlLib.Directory.FullName           # ...\Lib\<ver>\km\arm64
 
 # Generic SDK headers (specstrings.h etc.) live in the Microsoft.Windows.SDK.cpp package
 $specHeader = Get-ChildItem "$Pkg" -Recurse -Filter "specstrings.h" | Select-Object -First 1

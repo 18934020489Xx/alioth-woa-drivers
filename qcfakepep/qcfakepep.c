@@ -219,7 +219,7 @@ QcPepAddDevice(
     )
 {
     PDEVICE_OBJECT              fdo = NULL;
-    PQCPEP_DEVICE_EXTENSION     ext;
+    PQCPEP_DEVICE_EXTENSION     ext = NULL;
     UNICODE_STRING              devName;
     NTSTATUS                    status;
 
