@@ -286,6 +286,74 @@ Fail:
 }
 
 /* ------------------------------------------------------------------ */
+/* EPSS max-frequency (merged from aliothcpufreq)                      */
+/*                                                                     */
+/* SM8250 frequency control is plain MMIO (Linux qcom-cpufreq-hw.c,    */
+/* EPSS variant): write the max LUT row index to base+0x320.           */
+/*   Domain 0 (CPU0-3, A77): 0x18591000                                */
+/*   Domain 1 (CPU4-7, A55): 0x18592000                                */
+/* No SCM call; enable bit set by firmware; voltage applied by AOP;    */
+/* LMH thermal limiting stays active in hardware.                      */
+/* Nobody else writes PERF_STATE on this system (no PEP, no CPPC), so  */
+/* the setting persists until reboot.                                  */
+/* ------------------------------------------------------------------ */
+
+#define EPSS_DOMAIN_COUNT   2
+#define EPSS_D0_PHYS        0x0000000185910000ULL
+#define EPSS_D1_PHYS        0x0000000185920000ULL
+#define EPSS_MAP_SIZE       0x1000
+#define EPSS_REG_FREQ_LUT   0x100
+#define EPSS_REG_PERF_STATE 0x320
+#define EPSS_REG_DOMAIN_ST  0x020
+#define EPSS_LUT_MAX_ROWS   40
+#define EPSS_LUT_LVAL_MASK  0x000000FFu
+#define EPSS_XO_HZ          19200000ULL
+
+static VOID
+QcPepRaiseEpssFrequencies(VOID)
+{
+    static const ULONGLONG bases[EPSS_DOMAIN_COUNT] = { EPSS_D0_PHYS, EPSS_D1_PHYS };
+    ULONG d;
+
+    for (d = 0; d < EPSS_DOMAIN_COUNT; d++) {
+        PHYSICAL_ADDRESS pa;
+        PVOID mapped;
+        ULONG i, row, lval, bestIdx = 0, bestLval = 0;
+
+        pa.QuadPart = (LONGLONG)bases[d];
+        mapped = MmMapIoSpaceEx(pa, EPSS_MAP_SIZE, PAGE_READWRITE | PAGE_NOCACHE);
+        if (mapped == NULL) {
+            KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
+                "qcfakepep: EPSS 0x%llX map failed\n", bases[d]));
+            continue;
+        }
+
+        for (i = 0; i < EPSS_LUT_MAX_ROWS; i++) {
+            row  = READ_REGISTER_ULONG((volatile ULONG *)((PUCHAR)mapped + EPSS_REG_FREQ_LUT + i * 4));
+            lval = row & EPSS_LUT_LVAL_MASK;
+            if (lval != 0 && lval >= bestLval) {
+                bestLval = lval;
+                bestIdx  = i;
+            }
+        }
+
+        if (bestLval != 0) {
+            WRITE_REGISTER_ULONG((volatile ULONG *)((PUCHAR)mapped + EPSS_REG_PERF_STATE), bestIdx);
+            KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
+                "qcfakepep: EPSS 0x%llX: max row=%u L_VAL=%u -> %u kHz (perf_state now %u, domain_state 0x%08X)\n",
+                bases[d], bestIdx, bestLval,
+                (ULONG)((bestLval * EPSS_XO_HZ) / 1000),
+                READ_REGISTER_ULONG((volatile ULONG *)((PUCHAR)mapped + EPSS_REG_PERF_STATE)),
+                READ_REGISTER_ULONG((volatile ULONG *)((PUCHAR)mapped + EPSS_REG_DOMAIN_ST))));
+        } else {
+            KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
+                "qcfakepep: EPSS 0x%llX: LUT empty, skipped\n", bases[d]));
+        }
+        /* Keep the mapping for the driver lifetime (never unloaded). */
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* Driver entry                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -298,6 +366,10 @@ DriverEntry(
     ULONG i;
 
     UNREFERENCED_PARAMETER(RegistryPath);
+
+    /* Raise both EPSS domains to their max LUT row before anything else.
+     * Runs once per boot; no other component manages frequency here. */
+    QcPepRaiseEpssFrequencies();
 
     DriverObject->DriverExtension->AddDevice = QcPepAddDevice;
     DriverObject->DriverUnload = NULL;   /* reboot to unload */
