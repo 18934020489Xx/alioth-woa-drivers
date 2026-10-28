@@ -27,7 +27,7 @@
  * Target: ARM64, Windows 10/11 (testsigning), WDM
  */
 
-#include <ntifs.h>
+#include <ntddk.h>
 #include <initguid.h>
 #include <wdm.h>
 
