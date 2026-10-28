@@ -21,7 +21,7 @@ if (-not (Test-Path $cl)) { throw "cl.exe (Hostx64/arm64) not found under $msvc"
 Write-Host "MSVC   : $msvc"
 
 # ---------- 2. locate WDK / SDK NuGet content ----------
-$wdkPkg = (Get-ChildItem "$Pkg\Microsoft.Windows.WDK.x64*" -Directory | Select-Object -First 1).FullName
+$wdkPkg = (Get-ChildItem "$Pkg\Microsoft.Windows.WDK.ARM64*" -Directory | Select-Object -First 1).FullName
 $sdkPkg = (Get-ChildItem "$Pkg\Microsoft.Windows.SDK.CPP.arm64*" -Directory | Select-Object -First 1).FullName
 Write-Host "WDK pkg: $wdkPkg"
 Write-Host "SDK pkg: $sdkPkg"
