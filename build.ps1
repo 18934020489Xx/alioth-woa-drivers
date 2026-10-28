@@ -91,26 +91,35 @@ Copy-Item "$Root\aliothcpufreq\aliothcpufreq.inf" $Out -Force
 # ---------- 5. inf2cat (best effort) ----------
 $inf2cat = $null
 foreach ($cand in @(
-    (Get-ChildItem "$wdkPkg" -Recurse -Filter inf2cat.exe -ErrorAction SilentlyContinue | Select-Object -First 1).FullName,
-    (& $vswhere -latest -find "**\inf2cat.exe" | Select-Object -First 1)
+    (Get-ChildItem "$wdkPkg" -Recurse -Filter "Inf2Cat.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName,
+    (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "inf2cat.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
 )) { if ($cand) { $inf2cat = $cand; break } }
 
 if ($inf2cat) {
     Write-Host "inf2cat: $inf2cat"
-    & $inf2cat /driver:$Out /os:10_ARM64
+    $catOutput = & cmd /c "`"$inf2cat`" /driver:`"$Out`" /os:10_ARM64" 2>&1
+    $catOutput | ForEach-Object { Write-Host "inf2cat: $_" }
     if ($LASTEXITCODE -ne 0) { Write-Warning "inf2cat exited $LASTEXITCODE - check INF issues" }
 } else {
     Write-Warning "inf2cat.exe not found - catalogs will not be generated"
 }
 
 # ---------- 6. self-sign (testsigning trust) ----------
-$signtool = & $vswhere -latest -find "**\signtool.exe" | Select-Object -First 1
+$signtool = $null
+foreach ($cand in @(
+    (& $vswhere -latest -find "**\signtool.exe" | Select-Object -First 1),
+    (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "signtool.exe" -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match 'x64' } | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+)) { if ($cand) { $signtool = $cand; break } }
+
 if ($signtool) {
+    Write-Host "signtool: $signtool"
     $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=Nova WOA Test" `
         -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(5)
     Export-Certificate -Cert $cert -FilePath "$Out\nova-woa-test.cer" | Out-Null
-    $catFiles = (Get-ChildItem "$Out\*.cat" -ErrorAction SilentlyContinue).FullName
-    & $signtool sign /fd sha256 /n "Nova WOA Test" "$Out\qcfakepep.sys" "$Out\aliothcpufreq.sys" @catFiles
+    $toSign = @("$Out\qcfakepep.sys", "$Out\aliothcpufreq.sys") +
+              (Get-ChildItem "$Out\*.cat" -ErrorAction SilentlyContinue).FullName
+    & $signtool sign /fd sha256 /n "Nova WOA Test" @toSign
     if ($LASTEXITCODE -ne 0) { Write-Warning "signtool exited $LASTEXITCODE" }
     Write-Host "Signed with CN=Nova WOA Test (thumbprint $($cert.Thumbprint))"
 } else {
