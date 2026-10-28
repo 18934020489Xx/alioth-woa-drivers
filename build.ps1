@@ -29,11 +29,19 @@ if (-not $ntoskrnlLib) { Get-ChildItem "$wdkPkg" -Directory -Recurse -Depth 3 | 
 
 $wdkIncRoot = $wdmHeader.Directory.Parent.FullName      # ...\Include\<ver>
 $wdkLibRoot = $ntoskrnlLib.Directory.Parent.FullName    # ...\Lib\<ver>\km\arm64
+
+# Generic SDK headers (specstrings.h etc.) live in the Microsoft.Windows.SDK.cpp package
+$specHeader = Get-ChildItem "$Pkg" -Recurse -Filter "specstrings.h" | Select-Object -First 1
+if (-not $specHeader) { throw "specstrings.h not found - SDK.cpp headers package missing" }
+$sdkIncRoot = $specHeader.Directory.Parent.FullName
+Write-Host "SDK inc: $sdkIncRoot"
 Write-Host "WDK inc: $wdkIncRoot"
 Write-Host "WDK lib: $wdkLibRoot"
 
 $incArgs = @(
-    "$wdkIncRoot\km", "$wdkIncRoot\km\crt", "$wdkIncRoot\shared",
+    "$wdkIncRoot\km", "$wdkIncRoot\km\crt",
+    "$sdkIncRoot\shared", "$sdkIncRoot\um", "$sdkIncRoot\ucrt",
+    "$wdkIncRoot\shared",
     "$msvc\include"
 ) | ForEach-Object { "/I`"$_`"" }
 
