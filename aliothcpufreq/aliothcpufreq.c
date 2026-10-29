@@ -270,6 +270,18 @@ WriteReport(
                    "aliothcpufreq: report write failed 0x%08X\n", st));
     }
 
+    /* Byte-exact copy: survives any host/console encoding round-trip. */
+    st = RtlWriteRegistryValue(RTL_REGISTRY_ABSOLUTE,
+                               PARAM_KEY_PATH,
+                               L"ReportBin",
+                               REG_BINARY,
+                               buf,
+                               (ULONG)(p - buf));
+    if (!NT_SUCCESS(st)) {
+        KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
+                   "aliothcpufreq: reportbin write failed 0x%08X\n", st));
+    }
+
     KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
                "aliothcpufreq: %s\n", buf));
 }
