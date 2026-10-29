@@ -30,9 +30,10 @@
 
 #include <ntddk.h>
 
-#define EPSS_DOMAIN_COUNT   2
-#define EPSS_D0_PHYS        0x0000000185910000ULL
-#define EPSS_D1_PHYS        0x0000000185920000ULL
+#define EPSS_DOMAIN_COUNT   3
+#define EPSS_D0_PHYS        0x00000000018591000ULL
+#define EPSS_D1_PHYS        0x00000000018592000ULL
+#define EPSS_D2_PHYS        0x00000000018593000ULL
 #define EPSS_MAP_SIZE       0x1000
 
 #define REG_DOMAIN_STATE    0x020
@@ -59,7 +60,8 @@ typedef struct _EPSS_DOMAIN {
 
 static EPSS_DOMAIN g_Domains[EPSS_DOMAIN_COUNT] = {
     { EPSS_D0_PHYS, NULL, 0, 0, 0, 0, 0, 0, {0} },
-    { EPSS_D1_PHYS, NULL, 0, 0, 0, 0, 0, 0, {0} }
+    { EPSS_D1_PHYS, NULL, 0, 0, 0, 0, 0, 0, {0} },
+    { EPSS_D2_PHYS, NULL, 0, 0, 0, 0, 0, 0, {0} }
 };
 
 static ULONG
@@ -341,3 +343,4 @@ DriverEntry(
 
     return STATUS_SUCCESS;
 }
+
