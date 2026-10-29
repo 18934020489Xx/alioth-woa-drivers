@@ -171,6 +171,30 @@ QueryMode(VOID)
     return mode;
 }
 
+/* Index to request when Mode=1. Default 0xFFFFFFFF means "highest valid row". */
+static ULONG
+QueryPerfIndex(VOID)
+{
+    ULONG idx = 0xFFFFFFFF;
+    ULONG defIdx = 0xFFFFFFFF;
+    RTL_QUERY_REGISTRY_TABLE tab[2];
+
+    RtlZeroMemory(tab, sizeof(tab));
+    tab[0].Flags         = RTL_QUERY_REGISTRY_DIRECT;
+    tab[0].Name          = L"PerfIndex";
+    tab[0].EntryContext  = &idx;
+    tab[0].DefaultType   = REG_DWORD;
+    tab[0].DefaultData   = &defIdx;
+    tab[0].DefaultLength = sizeof(ULONG);
+
+    if (!NT_SUCCESS(RtlQueryRegistryValues(RTL_REGISTRY_ABSOLUTE,
+                                           PARAM_KEY_PATH,
+                                           tab, NULL, NULL))) {
+        return 0xFFFFFFFF;
+    }
+    return idx;
+}
+
 static VOID
 ScanDomain(
     _Inout_ PEPSS_DOMAIN Domain
@@ -341,12 +365,19 @@ DriverEntry(
     WriteReport(mode);
 
     if (mode == 1) {
+        ULONG want = QueryPerfIndex();
         for (i = 0; i < EPSS_DOMAIN_COUNT; i++) {
             PEPSS_DOMAIN d = &g_Domains[i];
+            ULONG target;
+
             if (d->MappedBase == NULL || d->MaxLval == 0) {
                 continue;
             }
-            WriteReg32(d->MappedBase, REG_PERF_STATE, d->MaxIndex);
+            target = (want == 0xFFFFFFFF) ? d->MaxIndex : want;
+            if (target > d->MaxIndex) {
+                target = d->MaxIndex;
+            }
+            WriteReg32(d->MappedBase, REG_PERF_STATE, target);
             d->PerfState   = ReadReg32(d->MappedBase, REG_PERF_STATE);
             d->DomainState = ReadReg32(d->MappedBase, REG_DOMAIN_STATE);
         }
