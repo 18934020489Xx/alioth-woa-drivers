@@ -22,8 +22,8 @@
  *   reg_domain_state = base + 0x020
  *   frequency = L_VAL * 19.2 MHz (XO)
  *
- * Load/unload: legacy WDM driver, DriverEntry + DriverUnload so it can be
- * stopped with "sc stop" and re-started with a different Mode without a reboot.
+ * No CRT / no ntstrsafe dependency: string building is done by hand so the
+ * driver links with nothing but ntoskrnl.lib + hal.lib.
  *
  * Target: ARM64, Windows 10/11 (testsigning)
  */
@@ -81,6 +81,71 @@ WriteReg32(
     WRITE_REGISTER_ULONG((volatile ULONG *)((PUCHAR)MappedBase + Offset), Value);
 }
 
+/* ---------- tiny string helpers (no CRT) ---------- */
+
+static CHAR *
+AppStr(
+    _In_ CHAR *P,
+    _In_ const CHAR *S
+    )
+{
+    while (*S != '\0') {
+        *P++ = *S++;
+    }
+    *P = '\0';
+    return P;
+}
+
+static CHAR *
+AppDec(
+    _In_ CHAR *P,
+    _In_ ULONG V
+    )
+{
+    CHAR tmp[12];
+    ULONG n = 0;
+
+    if (V == 0) {
+        *P++ = '0';
+        *P = '\0';
+        return P;
+    }
+    while (V > 0 && n < sizeof(tmp)) {
+        tmp[n++] = (CHAR)('0' + (V % 10));
+        V /= 10;
+    }
+    while (n > 0) {
+        *P++ = tmp[--n];
+    }
+    *P = '\0';
+    return P;
+}
+
+static CHAR *
+AppHex(
+    _In_ CHAR *P,
+    _In_ ULONGLONG V,
+    _In_ ULONG Digits
+    )
+{
+    static const CHAR hx[] = "0123456789ABCDEF";
+    ULONG i;
+    BOOLEAN started = FALSE;
+
+    for (i = 0; i < 16; i++) {
+        ULONG shift = (16 - 1 - i) * 4;
+        ULONG nib = (ULONG)((V >> shift) & 0xF);
+
+        if (!started && nib == 0 && i < (16 - Digits)) {
+            continue;
+        }
+        started = TRUE;
+        *P++ = hx[nib];
+    }
+    *P = '\0';
+    return P;
+}
+
 static ULONG
 QueryMode(VOID)
 {
@@ -89,11 +154,11 @@ QueryMode(VOID)
     RTL_QUERY_REGISTRY_TABLE tab[2];
 
     RtlZeroMemory(tab, sizeof(tab));
-    tab[0].Flags        = RTL_QUERY_REGISTRY_DIRECT;
-    tab[0].Name         = L"Mode";
-    tab[0].EntryContext = &mode;
-    tab[0].DefaultType  = REG_DWORD;
-    tab[0].DefaultData  = &defMode;
+    tab[0].Flags         = RTL_QUERY_REGISTRY_DIRECT;
+    tab[0].Name          = L"Mode";
+    tab[0].EntryContext  = &mode;
+    tab[0].DefaultType   = REG_DWORD;
+    tab[0].DefaultData   = &defMode;
     tab[0].DefaultLength = sizeof(ULONG);
 
     if (!NT_SUCCESS(RtlQueryRegistryValues(RTL_REGISTRY_ABSOLUTE,
@@ -143,53 +208,68 @@ WriteReport(
     _In_ ULONG Mode
     )
 {
-    CHAR        buf[1024];
-    NTSTATUS    st;
-    ULONG       i;
-    size_t      len = 0;
+    CHAR    buf[600];
+    CHAR   *p = buf;
+    ULONG   i;
+    NTSTATUS st;
 
-    RtlStringCbPrintfA(buf, sizeof(buf),
-                       "mode=%u\r\n", Mode);
+    p = AppStr(p, "mode=");
+    p = AppDec(p, Mode);
+    p = AppStr(p, "\r\n");
 
     for (i = 0; i < EPSS_DOMAIN_COUNT; i++) {
         PEPSS_DOMAIN d = &g_Domains[i];
-        CHAR tmp[320];
+
+        p = AppStr(p, "d");
+        p = AppDec(p, i);
+        p = AppStr(p, ": base=0x");
+        p = AppHex(p, d->PhysBase, 9);
 
         if (d->MappedBase == NULL) {
-            RtlStringCbPrintfA(tmp, sizeof(tmp),
-                               "d%u: base=0x%llX MAP_FAILED\r\n", i, d->PhysBase);
-        } else {
-            RtlStringCbPrintfA(tmp, sizeof(tmp),
-                               "d%u: base=0x%llX valid=%u maxIdx=%u maxLval=%u maxMHz=%u perf=%u domstate=0x%08X\r\n",
-                               i, d->PhysBase, d->ValidRows, d->MaxIndex,
-                               d->MaxLval, d->MaxMHz, d->PerfState, d->DomainState);
+            p = AppStr(p, " MAP_FAILED\r\n");
+            continue;
         }
-        RtlStringCbCatA(buf, sizeof(buf), tmp);
 
-        if (d->MappedBase != NULL) {
-            RtlStringCbPrintfA(tmp, sizeof(tmp),
-                               "d%u: lut=%08X %08X %08X %08X %08X %08X %08X %08X\r\n",
-                               i, d->Lut[0], d->Lut[1], d->Lut[2], d->Lut[3],
-                               d->Lut[4], d->Lut[5], d->Lut[6], d->Lut[7]);
-            RtlStringCbCatA(buf, sizeof(buf), tmp);
+        p = AppStr(p, " valid=");
+        p = AppDec(p, d->ValidRows);
+        p = AppStr(p, " maxIdx=");
+        p = AppDec(p, d->MaxIndex);
+        p = AppStr(p, " maxLval=");
+        p = AppDec(p, d->MaxLval);
+        p = AppStr(p, " maxMHz=");
+        p = AppDec(p, d->MaxMHz);
+        p = AppStr(p, " perf=");
+        p = AppDec(p, d->PerfState);
+        p = AppStr(p, " domstate=0x");
+        p = AppHex(p, d->DomainState, 8);
+        p = AppStr(p, "\r\n");
+
+        p = AppStr(p, "d");
+        p = AppDec(p, i);
+        p = AppStr(p, ": lut=");
+        {
+            ULONG k;
+            for (k = 0; k < 8; k++) {
+                p = AppHex(p, d->Lut[k], 8);
+                p = AppStr(p, " ");
+            }
         }
+        p = AppStr(p, "\r\n");
     }
 
-    if (NT_SUCCESS(RtlStringCbLengthA(buf, sizeof(buf), &len))) {
-        st = RtlWriteRegistryValue(RTL_REGISTRY_ABSOLUTE,
-                                   PARAM_KEY_PATH,
-                                   L"Report",
-                                   REG_SZ,
-                                   buf,
-                                   (ULONG)len + 1);
-        if (!NT_SUCCESS(st)) {
-            KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
-                       "aliothcpufreq: report write failed 0x%08X\n", st));
-        }
+    st = RtlWriteRegistryValue(RTL_REGISTRY_ABSOLUTE,
+                               PARAM_KEY_PATH,
+                               L"Report",
+                               REG_SZ,
+                               buf,
+                               (ULONG)(p - buf) + 1);
+    if (!NT_SUCCESS(st)) {
+        KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
+                   "aliothcpufreq: report write failed 0x%08X\n", st));
     }
 
     KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
-               "aliothcpufreq: report -> %s\n", buf));
+               "aliothcpufreq: %s\n", buf));
 }
 
 static VOID
