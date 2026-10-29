@@ -373,6 +373,20 @@ DriverEntry(
             if (d->MappedBase == NULL || d->MaxLval == 0) {
                 continue;
             }
+
+            /*
+             * Sanity gate: only write when the LUT looks like a real EPSS
+             * table. A wrong base address would produce garbage here; refusing
+             * to write keeps a future firmware change from bricking the SoC.
+             */
+            if (d->ValidRows < 10 || d->MaxLval < 10 || d->MaxLval > 250) {
+                KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_WARNING_LEVEL,
+                           "aliothcpufreq: domain 0x%llX LUT implausible "
+                           "(rows=%u maxLval=%u) - SKIPPING write\n",
+                           d->PhysBase, d->ValidRows, d->MaxLval));
+                continue;
+            }
+
             target = (want == 0xFFFFFFFF) ? d->MaxIndex : want;
             if (target > d->MaxIndex) {
                 target = d->MaxIndex;
